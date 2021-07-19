@@ -1,5 +1,6 @@
-﻿using Streamiz.Kafka.Net.Processors;
-using System;
+﻿using System;
+using System.Runtime.Serialization;
+using Streamiz.Kafka.Net.Processors;
 
 namespace Streamiz.Kafka.Net.Errors
 {
@@ -12,13 +13,14 @@ namespace Streamiz.Kafka.Net.Errors
     /// to backoff and retry when handling this exception.
     /// 
     /// </summary>
+    [Serializable]
     public class InvalidStateStoreException : Exception
     {
         /// <summary>
         /// Constructor with exception message
         /// </summary>
         /// <param name="message">Exception message</param>
-        public InvalidStateStoreException(string message) 
+        public InvalidStateStoreException(string message)
             : base(message)
         {
         }
@@ -27,7 +29,7 @@ namespace Streamiz.Kafka.Net.Errors
         /// Constructor with inner exception
         /// </summary>
         /// <param name="innerException">Inner exception</param>
-        public InvalidStateStoreException(Exception innerException) 
+        public InvalidStateStoreException(Exception innerException)
             : this("", innerException)
         {
         }
@@ -37,8 +39,18 @@ namespace Streamiz.Kafka.Net.Errors
         /// </summary>
         /// <param name="message">Exception message</param>
         /// <param name="innerException">Inner exception</param>
-        public InvalidStateStoreException(string message, Exception innerException) 
+        public InvalidStateStoreException(string message, Exception innerException)
             : base(message, innerException)
+        {
+        }
+
+        /// <summary>
+        /// Constructor used for deserialization of the exception
+        /// </summary>
+        /// <param name="info"></param>
+        /// <param name="context"></param>
+        protected InvalidStateStoreException(SerializationInfo info, StreamingContext context)
+            : base(info, context)
         {
         }
     }

@@ -1,10 +1,12 @@
 ﻿using System;
+using System.Runtime.Serialization;
 
 namespace Streamiz.Kafka.Net.Errors
 {
     /// <summary>
     /// Indicates a processor state operation (e.g. put, get) has failed.
     /// </summary>
+    [Serializable]
     public class ProcessorStateException : Exception
     {
         /// <summary>
@@ -20,8 +22,18 @@ namespace Streamiz.Kafka.Net.Errors
         /// </summary>
         /// <param name="message">Exception message</param>
         /// <param name="innerException">Inner exception</param>
-        public ProcessorStateException(string message, Exception innerException) 
+        public ProcessorStateException(string message, Exception innerException)
             : base(message, innerException)
+        {
+        }
+
+        /// <summary>
+        /// Constructor used for deserialization of the exception
+        /// </summary>
+        /// <param name="info"></param>
+        /// <param name="context"></param>
+        protected ProcessorStateException(SerializationInfo info, StreamingContext context)
+            : base(info, context)
         {
         }
     }

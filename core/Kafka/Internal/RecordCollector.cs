@@ -1,12 +1,12 @@
-﻿using Confluent.Kafka;
+﻿using System;
+using System.Collections.Generic;
+using System.Text;
+using Confluent.Kafka;
 using log4net;
 using Streamiz.Kafka.Net.Crosscutting;
 using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Processors.Internal;
 using Streamiz.Kafka.Net.SerDes;
-using System;
-using System.Collections.Generic;
-using System.Text;
 
 namespace Streamiz.Kafka.Net.Kafka.Internal
 {
@@ -26,7 +26,7 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
         private readonly ILog log = Logger.GetLogger(typeof(RecordCollector));
 
 
-        public RecordCollector(string logPrefix, IStreamConfig configuration, TaskId id) 
+        public RecordCollector(string logPrefix, IStreamConfig configuration, TaskId id)
         {
             this.logPrefix = $"{logPrefix}";
             this.configuration = configuration;
@@ -50,7 +50,7 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
         public void Close()
         {
             log.Debug($"{logPrefix}Closing producer");
-            if(producer != null)
+            if (producer != null)
             {
                 lock (_lock)
                 {
@@ -72,7 +72,8 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
                 try
                 {
                     producer.Flush();
-                }catch(ObjectDisposedException)
+                }
+                catch (ObjectDisposedException)
                 {
                     // has been disposed
                 }
@@ -85,25 +86,6 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
         public void Send<K, V>(string topic, K key, V value, Headers headers, int partition, long timestamp, ISerDes<K> keySerializer, ISerDes<V> valueSerializer)
             => SendInternal(topic, key, value, headers, partition, timestamp, keySerializer, valueSerializer);
 
-        private bool IsFatalError(DeliveryReport<byte[], byte[]> report)
-        {
-            return report.Error.IsFatal ||
-                    report.Error.Code == ErrorCode.TopicAuthorizationFailed ||
-                    report.Error.Code == ErrorCode.GroupAuthorizationFailed ||
-                    report.Error.Code == ErrorCode.ClusterAuthorizationFailed ||
-                    report.Error.Code == ErrorCode.UnsupportedSaslMechanism ||
-                    report.Error.Code == ErrorCode.SecurityDisabled ||
-                    report.Error.Code == ErrorCode.SaslAuthenticationFailed ||
-                    report.Error.Code == ErrorCode.TopicException ||
-                    report.Error.Code == ErrorCode.Local_KeySerialization ||
-                    report.Error.Code == ErrorCode.Local_ValueSerialization ||
-                    report.Error.Code == ErrorCode.OffsetMetadataTooLarge;
-        }
-
-        private bool IsRecoverableError(DeliveryReport<byte[], byte[]> report)
-        {
-            return IsRecoverableError(report.Error);
-        }
 
         private bool IsRecoverableError(Error error)
         {
@@ -116,52 +98,6 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
         {
             var k = key != null ? keySerializer.Serialize(key, new SerializationContext(MessageComponentType.Key, topic, headers)) : null;
             var v = value != null ? valueSerializer.Serialize(value, new SerializationContext(MessageComponentType.Value, topic, headers)) : null;
-
-            void HandleError(DeliveryReport<byte[], byte[]> report){
-                if (report.Error.IsError)
-                {
-                    StringBuilder sb = new StringBuilder();
-                    sb.AppendLine($"{logPrefix}Error encountered sending record to topic {topic} for task {id} due to:");
-                    sb.AppendLine($"{logPrefix}Error Code : {report.Error.Code.ToString()}");
-                    sb.AppendLine($"{logPrefix}Message : {report.Error.Reason}");
-
-                    if (IsFatalError(report))
-                    {
-                        sb.AppendLine($"{logPrefix}Written offsets would not be recorded and no more records would be sent since this is a fatal error.");
-                        log.Error(sb.ToString());
-                        throw new StreamsException(sb.ToString());
-                    }
-                    else if (IsRecoverableError(report))
-                    {
-                        sb.AppendLine($"{logPrefix}Written offsets would not be recorded and no more records would be sent since the producer is fenced, indicating the task may be migrated out");
-                        log.Error(sb.ToString());
-                        throw new TaskMigratedException(sb.ToString());
-                    }
-                    else
-                    {
-                        if (configuration.ProductionExceptionHandler(report) == ExceptionHandlerResponse.FAIL)
-                        {
-                            sb.AppendLine($"{logPrefix}Exception handler choose to FAIL the processing, no more records would be sent.");
-                            log.Error(sb.ToString());
-                            throw new ProductionException(sb.ToString());
-                        }
-                        else
-                        {
-                            sb.AppendLine($"{logPrefix}Exception handler choose to CONTINUE processing in spite of this error but written offsets would not be recorded.");
-                            log.Error(sb.ToString());
-                        }
-                    }
-                }
-                else if (report.Status == PersistenceStatus.NotPersisted || report.Status == PersistenceStatus.PossiblyPersisted)
-                {
-                    log.Warn($"{logPrefix}Record not persisted or possibly persisted: (timestamp {report.Message.Timestamp.UnixTimestampMs}) topic=[{topic}] partition=[{report.Partition}] offset=[{report.Offset}]. May config Retry configuration, depends your use case.");
-                }
-                else if (report.Status == PersistenceStatus.Persisted)
-                {
-                    log.Debug($"{logPrefix}Record persisted: (timestamp {report.Message.Timestamp.UnixTimestampMs}) topic=[{topic}] partition=[{report.Partition}] offset=[{report.Offset}]");
-                }
-
-            }
 
             try
             {
@@ -178,7 +114,7 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
                         },
                         (report) =>
                         {
-                            HandleError(report);
+                            HandleError(report, topic);
                         });
                 }
                 else
@@ -194,7 +130,7 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
                            },
                            (report) =>
                            {
-                               HandleError(report);
+                               HandleError(report, topic);
                            });
                 }
             }
@@ -209,6 +145,69 @@ namespace Streamiz.Kafka.Net.Kafka.Internal
                     throw new StreamsException($"Error encountered trying to send record to topic {topic} [{logPrefix}] : {produceException.Message}");
                 }
             }
+        }
+
+        private void HandleError(DeliveryReport<byte[], byte[]> report, string topic)
+        {
+            if (report.Error.IsError)
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"{logPrefix}Error encountered sending record to topic {topic} for task {id} due to:");
+                sb.AppendLine($"{logPrefix}Error Code : {report.Error.Code.ToString()}");
+                sb.AppendLine($"{logPrefix}Message : {report.Error.Reason}");
+
+                if (IsFatalError(report))
+                {
+                    sb.AppendLine($"{logPrefix}Written offsets would not be recorded and no more records would be sent since this is a fatal error.");
+                    log.Error(sb.ToString());
+                    throw new StreamsException(sb.ToString());
+                }
+                else if (IsRecoverableError(report))
+                {
+                    sb.AppendLine($"{logPrefix}Written offsets would not be recorded and no more records would be sent since the producer is fenced, indicating the task may be migrated out");
+                    log.Error(sb.ToString());
+                    throw new TaskMigratedException(sb.ToString());
+                }
+                else if (configuration.ProductionExceptionHandler(report) == ExceptionHandlerResponse.FAIL)
+                {
+                    sb.AppendLine($"{logPrefix}Exception handler choose to FAIL the processing, no more records would be sent.");
+                    log.Error(sb.ToString());
+                    throw new ProductionException(sb.ToString());
+                }
+                else
+                {
+                    sb.AppendLine($"{logPrefix}Exception handler choose to CONTINUE processing in spite of this error but written offsets would not be recorded.");
+                    log.Error(sb.ToString());
+                }
+            }
+            else if (report.Status == PersistenceStatus.NotPersisted || report.Status == PersistenceStatus.PossiblyPersisted)
+            {
+                log.Warn($"{logPrefix}Record not persisted or possibly persisted: (timestamp {report.Message.Timestamp.UnixTimestampMs}) topic=[{topic}] partition=[{report.Partition}] offset=[{report.Offset}]. May config Retry configuration, depends your use case.");
+            }
+            else if (report.Status == PersistenceStatus.Persisted)
+            {
+                log.Debug($"{logPrefix}Record persisted: (timestamp {report.Message.Timestamp.UnixTimestampMs}) topic=[{topic}] partition=[{report.Partition}] offset=[{report.Offset}]");
+            }
+        }
+
+        private bool IsRecoverableError(DeliveryReport<byte[], byte[]> report)
+        {
+            return IsRecoverableError(report.Error);
+        }
+
+        private bool IsFatalError(DeliveryReport<byte[], byte[]> report)
+        {
+            return report.Error.IsFatal ||
+                    report.Error.Code == ErrorCode.TopicAuthorizationFailed ||
+                    report.Error.Code == ErrorCode.GroupAuthorizationFailed ||
+                    report.Error.Code == ErrorCode.ClusterAuthorizationFailed ||
+                    report.Error.Code == ErrorCode.UnsupportedSaslMechanism ||
+                    report.Error.Code == ErrorCode.SecurityDisabled ||
+                    report.Error.Code == ErrorCode.SaslAuthenticationFailed ||
+                    report.Error.Code == ErrorCode.TopicException ||
+                    report.Error.Code == ErrorCode.Local_KeySerialization ||
+                    report.Error.Code == ErrorCode.Local_ValueSerialization ||
+                    report.Error.Code == ErrorCode.OffsetMetadataTooLarge;
         }
     }
 }

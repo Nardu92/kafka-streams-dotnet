@@ -1,14 +1,14 @@
-﻿using log4net;
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using log4net;
 using RocksDbSharp;
 using Streamiz.Kafka.Net.Crosscutting;
 using Streamiz.Kafka.Net.Errors;
 using Streamiz.Kafka.Net.Processors;
 using Streamiz.Kafka.Net.State.Enumerator;
-using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 
 namespace Streamiz.Kafka.Net.State.RocksDb
 {
@@ -18,7 +18,6 @@ namespace Streamiz.Kafka.Net.State.RocksDb
     {
         private readonly IKeyValueEnumerator<Bytes, byte[]> wrapped;
         private readonly Func<WrappedRocksRbKeyValueEnumerator, bool> closingCallback;
-        private bool disposed = false;
 
         public WrappedRocksRbKeyValueEnumerator(IKeyValueEnumerator<Bytes, byte[]> enumerator, Func<WrappedRocksRbKeyValueEnumerator, bool> closingCallback)
         {
@@ -32,15 +31,8 @@ namespace Streamiz.Kafka.Net.State.RocksDb
 
         public void Dispose()
         {
-            if (!disposed)
-            {
-                wrapped.Dispose();
-                closingCallback?.Invoke(this);
-                disposed = true;
-            }
-            else
-                throw new ObjectDisposedException("Enumerator was disposed");
-
+            wrapped?.Dispose();
+            closingCallback?.Invoke(this);
         }
 
         public bool MoveNext()
@@ -52,7 +44,7 @@ namespace Streamiz.Kafka.Net.State.RocksDb
         public void Reset()
             => wrapped.Reset();
     }
-    
+
     #endregion
 
     public class RocksDbKeyValueStore : IKeyValueStore<Bytes, byte[]>
@@ -146,7 +138,8 @@ namespace Streamiz.Kafka.Net.State.RocksDb
             {
                 oldValue = DbAdapter.GetOnly(key.Get);
             }
-            catch (RocksDbSharp.RocksDbException e){
+            catch (RocksDbSharp.RocksDbException e)
+            {
                 throw new ProcessorStateException("Error while getting value for key from store {Name}", e);
             }
 
@@ -159,7 +152,7 @@ namespace Streamiz.Kafka.Net.State.RocksDb
             CheckStateStoreOpen();
             if (Db == null)
                 return;
-            
+
             try
             {
                 DbAdapter.Flush();
@@ -177,7 +170,8 @@ namespace Streamiz.Kafka.Net.State.RocksDb
             {
                 return DbAdapter.Get(key.Get);
             }
-            catch (RocksDbSharp.RocksDbException e) {
+            catch (RocksDbSharp.RocksDbException e)
+            {
                 throw new ProcessorStateException($"Error while getting value for key from store {Name}", e);
             }
         }
@@ -265,7 +259,7 @@ namespace Streamiz.Kafka.Net.State.RocksDb
             // subtracts one from the value passed to determine the number of compaction threads
             // (this could be a bug in the RocksDB code and their devs have been contacted).
             rocksDbOptions.IncreaseParallelism(Math.Max(Environment.ProcessorCount, 2));
-            
+
             writeOptions.DisableWal(1);
 
             context.Configuration.RocksDbConfigHandler?.Invoke(Name, rocksDbOptions);
@@ -313,7 +307,7 @@ namespace Streamiz.Kafka.Net.State.RocksDb
                 }
             }
 
-            if(!open)
+            if (!open)
                 throw new ProcessorStateException("Error opening store " + Name + " at location " + DbDir.ToString(), rocksDbException);
         }
 
@@ -343,7 +337,7 @@ namespace Streamiz.Kafka.Net.State.RocksDb
             openIterators.Add(wrapped);
             return wrapped;
         }
-        
+
         private IEnumerable<KeyValuePair<Bytes, byte[]>> All(bool forward)
         {
             var enumerator = DbAdapter.All(forward);

@@ -1,12 +1,12 @@
-﻿using Confluent.Kafka;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Confluent.Kafka;
 using Confluent.Kafka.Admin;
 using log4net;
 using Streamiz.Kafka.Net.Crosscutting;
 using Streamiz.Kafka.Net.Errors;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 
 namespace Streamiz.Kafka.Net.Processors
 {
@@ -38,87 +38,14 @@ namespace Streamiz.Kafka.Net.Processors
         /// <returns>the list of topics which had to be newly created</returns>
         public async Task<IEnumerable<string>> ApplyAsync(IDictionary<string, InternalTopicConfig> topics)
         {
-            int maxRetry = 10, i = 0;
-
-            #region inner method
-
-            async Task<IEnumerable<string>> Run()
-            {
-                log.Debug($"Starting to apply internal topics in topic manager (try: {i + 1}, max retry : {maxRetry}).");
-                var defaultConfig = new Dictionary<string, string>();
-                var topicsNewCreated = new List<string>();
-                var topicsToCreate = new List<string>();
-                var metadata = AdminClient.GetMetadata(timeout);
-
-                // 1. get source topic partition
-                // 2. check if changelog exist, :
-                //   2.1 - if yes and partition number exactly same; continue;
-                //   2.2 - if yes, and partition number !=; throw Exception
-                // 3. if changelog doesn't exist, create it with partition number and configuration
-                foreach (var t in topics)
-                {
-                    var numberPartitions = GetNumberPartitionForTopic(metadata, t.Key);
-                    if (numberPartitions == 0)
-                    {
-                        // Topic need to create
-                        topicsToCreate.Add(t.Key);
-                    }
-                    else
-                    {
-                        if (numberPartitions == t.Value.NumberPartitions)
-                        {
-                            continue;
-                        }
-                        else
-                        {
-                            string msg = $"Existing internal topic {t.Key} with invalid partitions: expected {t.Value.NumberPartitions}, actual: {numberPartitions}. Please clean up invalid topics before processing.";
-                            log.Error(msg);
-                            throw new StreamsException(msg);
-                        }
-                    }
-                }
-
-                if (topicsToCreate.Any())
-                {
-                    var topicSpecifications = topicsToCreate
-                        .Select(t => topics[t])
-                        .Select(t => new TopicSpecification()
-                        {
-                            Name = t.Name,
-                            NumPartitions = t.NumberPartitions,
-                            ReplicationFactor = (short)config.ReplicationFactor,
-                            Configs = new Dictionary<string, string>(t.GetProperties(defaultConfig, config.WindowStoreChangelogAdditionalRetentionMs))
-                        });
-
-                    await AdminClient.CreateTopicsAsync(topicSpecifications);
-
-                    // Check if topics has been created
-
-                    var metadata2 = AdminClient.GetMetadata(timeout);
-                    var intersectCount = metadata2.Topics.Select(t => t.Topic).Intersect(topicsToCreate).Count();
-                    if (intersectCount != topicsToCreate.Count)
-                    {
-                        throw new StreamsException($"All topics has not been created. Please retry to create all topics.");
-                    }
-                    else
-                    {
-                        topicsNewCreated.AddRange(topicsToCreate);
-                        log.Debug($"Internal topics has been created : {string.Join(", ", topicsNewCreated)}");
-                    }
-                }
-
-                log.Debug($"Complete to apply internal topics in topic manager.");
-                return topicsNewCreated;
-            }
-
-            #endregion
-            
             Exception _e = null;
+            int maxRetry = 10, i = 0;
             while (i < maxRetry)
             {
                 try
                 {
-                    return await Run();
+                    log.Debug($"Starting to apply internal topics in topic manager (try: {i + 1}, max retry : {maxRetry}).");
+                    return await CreateNewTopics(topics);
                 }
                 catch (Exception e)
                 {
@@ -129,6 +56,75 @@ namespace Streamiz.Kafka.Net.Processors
             }
 
             throw new StreamsException(_e);
+        }
+
+        private async Task<IEnumerable<string>> CreateNewTopics(IDictionary<string, InternalTopicConfig> topics)
+        {
+            var defaultConfig = new Dictionary<string, string>();
+            var metadata = AdminClient.GetMetadata(timeout);
+            var topicsToCreate = GetTopicsToCreate(topics, metadata);
+
+            if (topicsToCreate.Any())
+            {
+                var topicSpecifications = topicsToCreate
+                    .Select(t => topics[t])
+                    .Select(t => new TopicSpecification()
+                    {
+                        Name = t.Name,
+                        NumPartitions = t.NumberPartitions,
+                        ReplicationFactor = (short)config.ReplicationFactor,
+                        Configs = new Dictionary<string, string>(t.GetProperties(defaultConfig, config.WindowStoreChangelogAdditionalRetentionMs))
+                    });
+
+                await AdminClient.CreateTopicsAsync(topicSpecifications);
+
+                // Check if topics has been created
+                var newTopicsCount = AdminClient.GetMetadata(timeout).Topics.Select(t => t.Topic).Intersect(topicsToCreate).Count();
+                if (newTopicsCount != topicsToCreate.Count)
+                {
+                    throw new StreamsException($"Not all topics have not been created. Please retry.");
+                }
+                else
+                {
+                    log.Debug($"Internal topics has been created : {string.Join(", ", topicsToCreate)}");
+                }
+            }
+
+            log.Debug($"Complete to apply internal topics in topic manager.");
+            return topicsToCreate;
+        }
+
+        private List<string> GetTopicsToCreate(IDictionary<string, InternalTopicConfig> topics, Metadata metadata)
+        {
+            // 1. get source topic partition
+            // 2. check if changelog exist, :
+            //   2.1 - if yes and partition number exactly same; continue;
+            //   2.2 - if yes, and partition number !=; throw Exception
+            // 3. if changelog doesn't exist, create it with partition number and configuration
+            var topicsToCreate = new List<string>();
+            foreach (var t in topics)
+            {
+                var numberPartitions = GetNumberPartitionForTopic(metadata, t.Key);
+                if (numberPartitions == 0)
+                {
+                    // Topic need to create
+                    topicsToCreate.Add(t.Key);
+                }
+                else
+                {
+                    if (numberPartitions == t.Value.NumberPartitions)
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        string msg = $"Existing internal topic {t.Key} with invalid partitions: expected {t.Value.NumberPartitions}, actual: {numberPartitions}. Please clean up invalid topics before processing.";
+                        log.Error(msg);
+                        throw new StreamsException(msg);
+                    }
+                }
+            }
+            return topicsToCreate;
         }
 
         public void Dispose()

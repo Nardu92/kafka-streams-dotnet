@@ -11,8 +11,6 @@ namespace Streamiz.Kafka.Net.Processors
     public class DefaultTopicManager : ITopicManager
     {
         private readonly ILog log = Logger.GetLogger(typeof(DefaultTopicManager));
-        private readonly IStreamConfig config;
-        private readonly TimeSpan timeout = TimeSpan.FromSeconds(10);
         private readonly ITopicCreatorManager topicCreatorManager;
 
         public DefaultTopicManager(ITopicCreatorManager topicCreatorManager)

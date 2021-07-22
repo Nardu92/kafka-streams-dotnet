@@ -548,7 +548,8 @@ namespace Streamiz.Kafka.Net
         {
             // Create internal topics (changelogs) if need
             var adminClientInternalTopicManager = kafkaSupplier.GetAdmin(configuration.ToAdminConfig(StreamThread.GetSharedAdminClientId($"{configuration.ApplicationId.ToLower()}-admin-internal-topic-manager")));
-            internalTopicManager = new DefaultTopicManager(configuration, adminClientInternalTopicManager);
+            var topicCreatorManager = new TopicCreatorManager(configuration, adminClientInternalTopicManager);
+            internalTopicManager = new DefaultTopicManager(topicCreatorManager);
 
             await InternalTopicManagerUtils.CreateChangelogTopicsAsync(internalTopicManager, topology.Builder);
         }
